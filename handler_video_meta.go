@@ -1,11 +1,9 @@
 package main
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
-	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
 	"github.com/google/uuid"
 )
 
@@ -61,13 +59,7 @@ func (cfg *apiConfig) handlerVideoGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	signedVideo, err := cfg.dbVideoToSignedVideo(video)
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Could not sign video URL", err)
-		return
-	}
-
-	respondWithJSON(w, http.StatusOK, signedVideo)
+	respondWithJSON(w, http.StatusOK, video)
 }
 
 func (cfg *apiConfig) handlerVideosRetrieve(w http.ResponseWriter, r *http.Request) {
@@ -88,16 +80,5 @@ func (cfg *apiConfig) handlerVideosRetrieve(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	var signedVideos []database.Video
-	fmt.Printf("Type of videos: %T, Value: %#v\n", videos, videos)
-	for _, vid := range videos {
-		signedVid, err := cfg.dbVideoToSignedVideo(vid)
-		if err != nil {
-			respondWithError(w, http.StatusInternalServerError, "Could not sign video URL", err)
-			return
-		}
-		signedVideos = append(signedVideos, signedVid)
-	}
-
-	respondWithJSON(w, http.StatusOK, signedVideos)
+	respondWithJSON(w, http.StatusOK, videos)
 }

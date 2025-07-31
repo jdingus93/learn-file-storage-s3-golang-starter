@@ -24,15 +24,25 @@ document.getElementById('login-form').addEventListener('submit', async (event) =
 async function createVideoDraft() {
   const title = document.getElementById('video-title').value;
   const description = document.getElementById('video-description').value;
+  const videoFile = document.getElementById('video-file').files[0];
+
+  if (!videoFile) {
+    alert('Please select a video file to upload.');
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append('title', title);
+  formData.append('description', description);
+  formData.append('video', videoFile);
 
   try {
     const res = await fetch('/api/videos', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
         Authorization: `Bearer ${localStorage.getItem('token')}`,
       },
-      body: JSON.stringify({ title, description }),
+      body: formData,
     });
     const data = await res.json();
     if (!res.ok) {
@@ -41,6 +51,7 @@ async function createVideoDraft() {
 
     const videoID = data.id;
     if (videoID) {
+      alert('Video uploaded successfully!');
       await getVideos();
       await videoStateHandler(videoID);
     }

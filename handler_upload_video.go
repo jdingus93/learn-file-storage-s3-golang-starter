@@ -12,8 +12,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"strings"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -128,7 +126,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 
 	fmt.Println("Assigned video.VideoURL =", video.VideoURL)
 
-	videoURL := fmt.Sprintf("%s,%s", bucket, key)
+	videoURL := fmt.Sprintf("https://%s/%s", cfg.s3CfDistribution, key)
 	video.VideoURL = &videoURL
 
 	fmt.Println("Updating video", video.ID, "with video URL", videoURL)
@@ -139,13 +137,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	signedVideo, err := cfg.dbVideoToSignedVideo(video)
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Could not sign video url", err)
-		return
-	}
-
-	respondWithJSON(w, http.StatusOK, signedVideo)
+	respondWithJSON(w, http.StatusOK, videoURL)
 
 	fmt.Println("uploading video", video.ID, "by user", userID)
 }
@@ -192,26 +184,4 @@ func (cfg *apiConfig) getVideoAspectRatio(filePath string) (string, error) {
 	} else {
 		return "other", nil
 	}
-}
-
-func (cfg *apiConfig) dbVideoToSignedVideo(video database.Video) (database.Video, error) {
-	if video.VideoURL == nil || *video.VideoURL == "" {
-		return video, fmt.Errorf("video has no URL to sign")
-	}
-	parts := strings.Split(*video.VideoURL, ",")
-	if len(parts) != 2 {
-		return video, fmt.Errorf("invalid video URL format: %v", *video.VideoURL)
-	}
-
-	bucket := parts[0]
-	key := parts[1]
-	expireTime := time.Minute
-
-	presignedURL, err := generatePresignedURL(cfg.s3Client, bucket, key, expireTime)
-	if err != nil {
-		return video, err
-	}
-
-	video.VideoURL = &presignedURL
-	return video, nil
 }
