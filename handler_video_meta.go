@@ -1,47 +1,13 @@
 package main
 
 import (
-	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
 	"github.com/google/uuid"
 )
-
-func (cfg *apiConfig) handlerVideoMetaCreate(w http.ResponseWriter, r *http.Request) {
-	type parameters struct {
-		database.CreateVideoParams
-	}
-
-	token, err := auth.GetBearerToken(r.Header)
-	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "Couldn't find JWT", err)
-		return
-	}
-	userID, err := auth.ValidateJWT(token, cfg.jwtSecret)
-	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "Couldn't validate JWT", err)
-		return
-	}
-
-	decoder := json.NewDecoder(r.Body)
-	params := parameters{}
-	err = decoder.Decode(&params)
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Couldn't decode parameters", err)
-		return
-	}
-	params.UserID = userID
-
-	video, err := cfg.db.CreateVideo(params.CreateVideoParams)
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Couldn't create video", err)
-		return
-	}
-
-	respondWithJSON(w, http.StatusCreated, video)
-}
 
 func (cfg *apiConfig) handlerVideoMetaDelete(w http.ResponseWriter, r *http.Request) {
 	videoIDString := r.PathValue("videoID")
@@ -95,7 +61,13 @@ func (cfg *apiConfig) handlerVideoGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondWithJSON(w, http.StatusOK, video)
+	signedVideo, err := cfg.dbVideoToSignedVideo(video)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Could not sign video URL", err)
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, signedVideo)
 }
 
 func (cfg *apiConfig) handlerVideosRetrieve(w http.ResponseWriter, r *http.Request) {
@@ -116,5 +88,16 @@ func (cfg *apiConfig) handlerVideosRetrieve(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	respondWithJSON(w, http.StatusOK, videos)
+	var signedVideos []database.Video
+	fmt.Printf("Type of videos: %T, Value: %#v\n", videos, videos)
+	for _, vid := range videos {
+		signedVid, err := cfg.dbVideoToSignedVideo(vid)
+		if err != nil {
+			respondWithError(w, http.StatusInternalServerError, "Could not sign video URL", err)
+			return
+		}
+		signedVideos = append(signedVideos, signedVid)
+	}
+
+	respondWithJSON(w, http.StatusOK, signedVideos)
 }

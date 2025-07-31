@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,27 +12,24 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
-	"github.com/google/uuid"
+	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
 )
 
 func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request) {
-	videoIDString := r.PathValue("videoID")
 	randomBytes := make([]byte, 32)
 	_, err := rand.Read(randomBytes)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Could not generate random file name", err)
 		return
 	}
-
-	videoID, err := uuid.Parse(videoIDString)
-	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid video ID", err)
-		return
-	}
+	randomBase := base64.RawURLEncoding.EncodeToString(randomBytes)
+	filename := randomBase + "." + "mp4"
 
 	token, err := auth.GetBearerToken(r.Header)
 	if err != nil {
@@ -45,13 +43,13 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	video, err := cfg.db.GetVideo(videoID)
+	video, err := cfg.db.CreateVideo(database.CreateVideoParams{
+		Title:			"Get title from request",
+		Description:	"Get descrition from request",
+		UserID:		userID,
+	})
 	if err != nil {
-		respondWithError(w, http.StatusNotFound, "Video not found", err)
-		return
-	}
-	if video.UserID != userID {
-		respondWithError(w, http.StatusUnauthorized, "You do not own this video", nil)
+		respondWithError(w, http.StatusInternalServerError, "Could not create video", err)
 		return
 	}
 
@@ -66,6 +64,8 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	defer file.Close()
 
 	contentType := header.Header.Get("Content-Type")
+
+	fmt.Println("Received Content-Type:", contentType)
 
 	mediaType, _, err := mime.ParseMediaType(contentType)
 	if err != nil {
@@ -92,7 +92,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	tempFile.Seek(0, io.SeekStart)
+	_, err = tempFile.Seek(0, io.SeekStart)
 	if err != nil {
     respondWithError(w, http.StatusInternalServerError, "Could not reset file pointer", err)
     return
@@ -105,16 +105,18 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	}
 
 	prefix := "other"
-	if aspect == "16:9" {
+	switch aspect {
+	case "16:9":
 		prefix = "landscape"
-	} else if aspect == "9:16" {
+	case "9:16":
 		prefix = "portrait"
 	}
 
-	key := prefix + fmt.Sprintf("%x.mp4", randomBytes)
+	bucket := cfg.s3Bucket
+	key := fmt.Sprintf("%s/%s", prefix, filename)
 
 	_, err = cfg.s3Client.PutObject(context.Background(), &s3.PutObjectInput{
-		Bucket:			aws.String(cfg.s3Bucket),
+		Bucket:			aws.String(bucket),
 		Key:			aws.String(key),
 		Body:			tempFile,
 		ContentType:	aws.String("video/mp4"),
@@ -124,7 +126,9 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	videoURL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", cfg.s3Bucket, cfg.s3Region, key)
+	fmt.Println("Assigned video.VideoURL =", video.VideoURL)
+
+	videoURL := fmt.Sprintf("%s,%s", bucket, key)
 	video.VideoURL = &videoURL
 
 	fmt.Println("Updating video", video.ID, "with video URL", videoURL)
@@ -135,9 +139,15 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	respondWithJSON(w, http.StatusOK, video)
+	signedVideo, err := cfg.dbVideoToSignedVideo(video)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Could not sign video url", err)
+		return
+	}
 
-	fmt.Println("uploading video", videoID, "by user", userID)
+	respondWithJSON(w, http.StatusOK, signedVideo)
+
+	fmt.Println("uploading video", video.ID, "by user", userID)
 }
 
 func (cfg *apiConfig) getVideoAspectRatio(filePath string) (string, error) {
@@ -182,4 +192,26 @@ func (cfg *apiConfig) getVideoAspectRatio(filePath string) (string, error) {
 	} else {
 		return "other", nil
 	}
+}
+
+func (cfg *apiConfig) dbVideoToSignedVideo(video database.Video) (database.Video, error) {
+	if video.VideoURL == nil || *video.VideoURL == "" {
+		return video, fmt.Errorf("video has no URL to sign")
+	}
+	parts := strings.Split(*video.VideoURL, ",")
+	if len(parts) != 2 {
+		return video, fmt.Errorf("invalid video URL format: %v", *video.VideoURL)
+	}
+
+	bucket := parts[0]
+	key := parts[1]
+	expireTime := time.Minute
+
+	presignedURL, err := generatePresignedURL(cfg.s3Client, bucket, key, expireTime)
+	if err != nil {
+		return video, err
+	}
+
+	video.VideoURL = &presignedURL
+	return video, nil
 }
